@@ -42,14 +42,17 @@ class ViTExtractor:
             self.model = ViTExtractor.patch_vit_resolution(self.model, stride=stride)
         # if torch.cuda.device_count() > 1:
         #     self.model = nn.DataParallel(self.model)
+
         self.model.eval() # All param.requires_grad for param in self.model.parameters() are False
         # print ('In vitextractor:')
         # for param in self.model.parameters():
         #     if param.requires_grad is True:
         #         print ('it is true')
         # os._exit(0)
-            # param.requires_grad = False
-        self.model.to(self.device)
+        # param.requires_grad = False
+
+        # ???? It takes years for model to cuda
+        self.model.to(self.device) 
         self.p = self.model.patch_embed.patch_size
         # for dinov2
         if 'dinov2' in model_type:
@@ -77,8 +80,8 @@ class ViTExtractor:
             model = torch.hub.load('facebookresearch/dino:main', model_type)
         elif 'dinov2' in model_type:
             # model = torch.hub.load('facebookresearch/dinov2:main', model_type)
-            model = torch.hub.load('facebookresearch/dinov2:main', model_type, pretrained=False)
-            model.load_state_dict(torch.load('../../dinov2_weights/dinov2_vits14_pytorch1.pth'))
+            model = torch.hub.load('facebookresearch/dinov2:main', model_type, pretrained=True)
+            # model.load_state_dict(torch.load('../../dinov2_weights/dinov2_vits14_pytorch1.pth'))
         else:  # model from timm -- load weights from timm to dino model (enables working on arbitrary size images).
             temp_model = timm.create_model(model_type, pretrained=True)
             model_type_dict = {
@@ -183,7 +186,6 @@ class ViTExtractor:
         prep_img = prep(pil_image)#[None, ...]
         # print ('In vitextractor.preprocess, pil_image.size is', prep_img.size())
         return prep_img, pil_image
-
 
     # def preprocess(self, image, load_size=None):
     #     """

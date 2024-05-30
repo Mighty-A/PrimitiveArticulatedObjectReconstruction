@@ -12,8 +12,7 @@ import torchvision.transforms.functional as F
 import pickle
 
 import sys
-sys.path.append('/Disk2/siqi/NewPrimReg')
-from smpl_webuser.serialization import load_model
+sys.path.append('/home/liweiting/yhy/term_project')
 
 
 class Resize_with_pad:
@@ -55,7 +54,37 @@ class Datasets(object):
         self.image_size = image_size
         self.transform = T.Resize((self.image_size, self.image_size))
 
-        self.data_list = # TODO
+        video_list = os.listdir(datamat_path)
+        video_list = [v for v in video_list if int(v[-4:]) <= 6]  # ignore test set
+        self.data_list = []
+        
+        num_valid_video = int(len(video_list) * data_load_ratio)
+        if train:
+            video_list = video_list[num_valid_video:]
+        else:
+            video_list = video_list[:num_valid_video]
+
+        for video_folder_name in video_list:
+            video_path = os.path.join(self.datamat_path, video_folder_name)
+            with open(os.path.join(video_path, "3d_info.txt"), "r", encoding="utf-8") as f:
+                info_3d = f.read()
+            with open(os.path.join(video_path, "jointstate.txt"), "r", encoding="utf-8") as f:
+                joint_state = [int(t) for t in f.readlines() if t != '\n']
+            num_frames = len(joint_state)
+
+            for i in range(num_frames):
+                frame_path = os.path.join(video_path, "frames", f"images-{str(i + 1).zfill(4)}.jpg")
+                mask_path = os.path.join(video_path, "gt_mask", f"{str(i + 1).zfill(4)}_object_mask.npy")
+                joints3d_path = os.path.join(video_path, "joints3d", f"joints3d-{str(i).zfill(4)}.npy")
+                self.data_list.append({
+                    "frame_path": frame_path,
+                    "mask_path": mask_path,
+                    "joints3d_path":joints3d_path,
+                    "info_3d": info_3d,
+                    "joint_state": joint_state[i]
+                })
+                
+        
 
     def __len__(self):
         return len(self.data_list)
@@ -209,12 +238,14 @@ class Datasets(object):
     def __getitem__(self, index):
         # TODO: load data by index and write to data_dict to be returned
 
-        ...
-
-
-        data_dict = {}
-        data_dict['rgb_path'] = ...
+        data_path_dict = self.data_list[index]
+        
+        data_dict = {
+            "image_name": data_path_dict["frame_path"],
+            "rgb": self.load_images_v2(data_path_dict["frame_path"]),
+            "o_mask": torch.from_numpy(np.load(data_path_dict["mask_path"])),
+            "info_3d": data_path_dict["info_3d"],
+            "joint_state": data_path_dict["joint_state"]
+        }
 
         return data_dict
-
-

@@ -14,11 +14,18 @@ import json
 import torch.utils.data
 import string
 import random
+import datasets
+from pytorch3d.io import load_ply
+from plyfile import PlyData
+
 try:
     from yaml import CLoader as Loader
 except ImportError:
     from yaml import Loader
 
+from renderer_nvdiff import Nvdiffrast
+from networks.baseline_network import Network_pts
+from myutils.graphAE_param import Parameters
 
 """ taken from https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse"""
 def str2bool(v):
@@ -31,24 +38,34 @@ def str2bool(v):
     else:
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
+file_dir = os.path.dirname(__file__)
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--mode', type=str, default='train', help='Determine if we run the code for training or testing. Chosen from [train, test]')
-parser.add_argument('--log_dir', type=str, default='/Disk3/siqi/NewPrimReg_outputs_aaai/baseline/logs')
+parser.add_argument('--log_dir', type=str, default=os.path.join(file_dir, "logs"))
 parser.add_argument('--gpu_id', type=int, default=0)
 # parser.add_argument('--output_directory', type=str, default='../../NewPrimReg_outputs_iccv/baseline/output_dir')
-parser.add_argument('--output_directory', type=str, default='/Disk3/siqi/NewPrimReg_outputs_aaai/baseline/output_dir')
+parser.add_argument('--output_directory', type=str, default=os.path.join(file_dir, "output_dir"))
 parser.add_argument('--experiment_tag', type=str, default='laptop')
 parser.add_argument('--device', type=str, default='cuda:0')
+parser.add_argument('--stride', type=int, default=4)
 # parser.add_argument('--vit_f_dim', type=int, default=3025) # dino
 parser.add_argument('--vit_f_dim', type=int, default=384) # dinov2
+parser.add_argument("--model_type", type=str, default="dinov2_vits14")
 # parser.add_argument('--res', type=int, default=112)
 parser.add_argument('--res', type=int, default=224)
+parser.add_argument('--lr', type=float, default=1e-4, help='Learning rate.')
+parser.add_argument("--annealing_lr", type=bool, default=True, help="Whether to use annealing learning rate.")
 parser.add_argument('--batch_size_train', type=int, default=8, help='Batch size of the training dataloader.')
 parser.add_argument('--batch_size_val', type=int, default=1, help='Batch size of the val dataloader.')
-parser.add_argument('--data_path', type=str, default='/Disk3/siqi/Data/NewPrimReg_collected_matdata_syn/laptop.mat')
+parser.add_argument("--checkpoint_model_path", type=str, default=None, help="Path to the model checkpoint.")
+parser.add_argument('--data_path', type=str, default=os.path.join(file_dir, "d3dhoi_video_data"))
+parser.add_argument('--data_load_ratio', type=float, default=0.2, help='The ratio of the data to be loaded as valid')
 parser.add_argument('--save_every', type=int, default=200)
 parser.add_argument('--val_every', type=int, default=200)
+parser.add_argument('--continue_from_epoch', type=int, default=0)
+parser.add_argument('--config_path', type=str, default=os.path.join(file_dir, "config"))
+parser.add_argument('--SQ_template_path', type=str, default=os.path.join(file_dir, "SQ_templates"))
 # parser.add_argument('--eval_images'
 
 args = parser.parse_args()
@@ -171,7 +188,8 @@ def load_checkpoints(model, optimizer, experiment_directory, args, device):
 
 
 def load_init_template_data(path):
-    data_path_dict = scipy.io.loadmat(path)
+    data_path_dict = scipy.io.loadmat(
+                                      )
     data_dict = {}
 
     init_object_sq = np.load(data_path_dict['object_init_sq_path'][0])
@@ -183,6 +201,34 @@ def load_init_template_data(path):
 
     data_dict['object_axle'] = data_path_dict['object_axle'][0]
     data_dict['object_num_bones'] = data_path_dict['object_num_bones'][0][0]
+
+    return data_dict
+
+def load_init_SQ_template_data(path):
+    joint_info_path = os.path.join(path, 'joint_info.mat')
+    part_centers_path = os.path.join(path, 'part_centers.npy')
+    ply_path = os.path.join(path, 'plys')
+    delta_rots_path =  os.path.join(ply_path, 'delta_rots.npy')
+    pred_rots_path = os.path.join(ply_path, "pred_rots.npy")
+    pre_sq_path = os.path.join(ply_path, "pred_sq.npy")
+
+    data_dict = {}
+
+    joint_info = scipy.io.loadmat(joint_info_path)
+    data_dict['joint_info'] = joint_info
+    data_dict["init_object_old_center"] = np.load(part_centers_path)
+    data_dict['object_joint_tree'] = joint_info['joint_tree']
+    data_dict['object_primitive_align'] = joint_info['primitive_align']
+    data_dict['object_joint_parameter_leaf'] = joint_info['joint_parameter_leaf']
+    data_dict['object_num_bones'] = joint_info['joint_tree'].shape[1]
+
+    pts = []
+    for i in range(data_dict["object_num_bones"]):
+        ply_data = PlyData.read(os.path.join(ply_path, "SQ_ply", f"{i}.ply"))
+
+        pts.append(ply_data['vertex'])
+
+    data_dict['object_input_pts'] = pts
 
     return data_dict
 
@@ -227,13 +273,25 @@ def train():
         os.makedirs(log_dir)
     writer = SummaryWriter(log_dir=log_dir)
 
-    config = load_config(args.config_file)
+    config = load_config(os.path.join(args.config_path, "tmp_config.yaml"))
     epochs = config["training"].get("epochs", 500)
 
-    net = # TODO: Create the network
+    graphAE_params = Parameters()
+    graphAE_params.read_config(os.path.join(args.config_path, "graphAE.config"))
+
+    print("-----[Build NN]")
+    net = Network_pts(
+        graphAE_param=graphAE_params,
+        test_mode=args.mode == 'test',
+        device=device,
+        stride=args.stride,
+        model_type=args.model_type,
+        vit_f_dim=args.vit_f_dim
+    ) # Finished TODO: Create the network
     if torch.cuda.device_count() > 1:
         net = torch.nn.DataParallel(net)
-    net.cuda()
+    
+    # net.cuda()
 
     # Build an optimizer object to compute the gradients of the parameters
     optimizer = torch.optim.Adam(net.parameters(), lr=args.lr)
@@ -242,12 +300,33 @@ def train():
     # Load the checkpoints if they exist in the experiment directory
     load_checkpoints(net, optimizer, experiment_directory, args, device)
 
-    # TODO: create the dataloader
-    train_dataset = datasets.Datasets(datamat_path=args.data_path, train=True, image_size=args.res, data_load_ratio=args.data_load_ratio)
-    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size_train, shuffle=True, num_workers=1, drop_last=True)
-    val_dataset = datasets.Datasets(datamat_path=args.data_path, train=False, image_size=args.res, data_load_ratio=args.data_load_ratio)
-    val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size_val, shuffle=False, num_workers=1)
-    init_template_data_dict = load_init_template_data(args.data_path)
+    # finished TODO: create the dataloader
+    print("-----[Create Dataloader]-----")
+    def collate_fn(batch):
+        batch_rgb = [item["rgb"] for item in batch]
+        batch_o_mask = [item["o_mask"] for item in batch]
+        batch_info_3d = [item["info_3d"] for item in batch]
+        batch_joint_state = [item["joint_state"] for item in batch]
+        batch_image_names = [item["image_name"] for item in batch]
+
+        # Convert rgb and o_mask to tensors
+        batch_rgb = torch.stack(batch_rgb, dim=0)
+        batch_o_mask = torch.stack(batch_o_mask, dim=0)
+
+        return {
+            "image_name": batch_image_names,
+            "rgb": batch_rgb,
+            "o_mask": batch_o_mask,
+            "info_3d": batch_info_3d,
+            "joint_state": batch_joint_state,
+        }
+    data_tag_path = os.path.join(args.data_path, args.experiment_tag)
+    train_dataset = datasets.Datasets(datamat_path=data_tag_path, train=True, image_size=args.res, data_load_ratio=args.data_load_ratio)
+    train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size_train, shuffle=True, num_workers=1, drop_last=True, collate_fn=collate_fn)
+    val_dataset = datasets.Datasets(datamat_path=data_tag_path, train=False, image_size=args.res, data_load_ratio=args.data_load_ratio)
+    val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size_val, shuffle=False, num_workers=1, collate_fn=collate_fn)
+    # init_template_data_dict = load_init_template_data(args.data_path)
+    init_template_data_dict = load_init_SQ_template_data(os.path.join(args.SQ_template_path, args.experiment_tag))
     print ('Dataloader finished!')
 
     # TODO: create the differtiable renderer
@@ -267,14 +346,33 @@ def train():
             # TODO: load all the data you need from dataloader, not limited
             image_names = data_dict['image_name']
             rgb_image = data_dict['rgb'].cuda()
-            o_image = data_dict['o_rgb'].cuda()
             object_white_mask = data_dict['o_mask'].cuda()
-
+            info3d = data_dict['info_3d']
+            joint_state = data_dict['joint_state']
+            object_input_pts = init_template_data_dict["object_input_pts"]
+            init_object_old_center = init_template_data_dict["init_object_old_center"]
+            object_num_bones = init_template_data_dict['object_num_bones']
+            object_joint_tree = init_template_data_dict['object_joint_tree']
+            object_primitive_align = init_template_data_dict["object_primitive_align"]
+            object_joint_parameter_leaf = init_template_data_dict["object_joint_parameter_leaf"]
+            cam_trans = None # seems useless
             # TODO: pass the input data to the network and generate the predictions
-            pred_dict = net(...)
+            pred_dict = net(
+                rgb_image,
+                object_input_pts,
+                init_object_old_center,
+                object_num_bones,
+                object_joint_tree,
+                object_primitive_align,
+                object_joint_parameter_leaf,
+                cam_trans
+            )
+
+            print(pred_dict)
+            image = renderer(pred_dict["deformed_object"])
 
             # TODO: compute loss functions
-            loss = ...
+            loss = torch.nn.functional.mse_loss(image, object_white_mask)
 
             # TODO: write the loss to tensorboard
             writer.add_scalar('train/loss', loss, epoch)
@@ -325,7 +423,6 @@ def train():
                     # TODO: visualze the predicted results
 
             print("====> Validation Epoch ====>")
-
 
     print("Saved statistics in {}".format(experiment_tag))
 

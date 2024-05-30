@@ -3,10 +3,7 @@ import os
 import torch
 import torch.nn as nn
 import pytorch3d
-import pytorch3d.transforms as p3dt
-import faiss
-import numpy as np
-import romp
+
 import math
 import torchvision
 
@@ -273,12 +270,14 @@ class ObjectNetwork_pts(nn.Module):
     def __init__(self, graphAE_param, test_mode, model_type, stride, device, vit_f_dim, mesh_f_dim=72, hidden_dim=256, bone_num=2):
         super(ObjectNetwork_pts, self).__init__()
 
+        print("    Building VIT")
         self.bone_num = bone_num
         self.whole_vitextractor = ViTExtractor(model_type, stride, device=device)
-        self.object_vitextractor = ViTExtractor(model_type, stride, device=device)
+        # self.object_vitextractor = ViTExtractor(model_type, stride, device=device)
         self.vitextractor_fc = nn.Linear(vit_f_dim, vit_f_dim)
-        self.vitextractor_cnn = ViTExtractorCNN(vit_f_dim)
+        self.vitextractor_cnn = ViTExtractorCNN(vit_f_dim).cuda()
 
+        print("    Building Predictor")
         self.total_rot6d_predictor = TotalRot6dPredictor(vit_f_dim+mesh_f_dim, hidden_dim=hidden_dim, out_dim=6)
         self.part_rotangle_predictor = PartRotAnglePredictor(vit_f_dim+mesh_f_dim, hidden_dim=hidden_dim, out_dim=1, bone_nums=bone_num-1)
         self.part_scale_predictor = PartScalePredictor(vit_f_dim+mesh_f_dim, hidden_dim=hidden_dim, out_dim=3, bone_nums=bone_num)
@@ -286,8 +285,10 @@ class ObjectNetwork_pts(nn.Module):
         self.leaf_angle_predictor = LeafAnglePredictor(vit_f_dim+mesh_f_dim, hidden_dim=hidden_dim, out_dim=1, bone_nums=bone_num-1)
         self.total_scale_predictor = TotalScalePredictor(vit_f_dim+mesh_f_dim, hidden_dim=hidden_dim, out_dim=1)
 
+        print("    Building GraphAE")
         # mesh encoder
         self.mesh_encoder = GraphAE(graphAE_param, test_mode)
+        
         # init graphAE with pre-trained weight and fix weight
         pretained_model = torch.load(graphAE_param.read_weight_path)
         pretrained_dict = pretained_model['model_state_dict']
@@ -301,7 +302,8 @@ class ObjectNetwork_pts(nn.Module):
         # forzen parameters of graphAE
         for param in self.mesh_encoder.parameters():
             param.requires_grad = False
-
+            
+        
     def cal_rotmat_from_angle_around_axis(self, all_joint_axis, all_the_pred_angle):
         batch_size = all_joint_axis.size(0)
         all_rotmat = []
@@ -431,16 +433,15 @@ class ObjectNetwork_pts(nn.Module):
             x_deformed_realign[primitive_align[i]] = x_deformed[i]
         new_center_realign = [[] for i in range(bone_num)]
         for i in range(bone_num):
-           new_center_realign[primitive_align[i]] = new_part_centers[i]
+            new_center_realign[primitive_align[i]] = new_part_centers[i]
         new_center_realign = torch.stack(new_center_realign, dim=1)
 
         return x_deformed_realign, new_center_realign, new_pivot_loc
 
-    def forward(self, rgb_image, o_image,
+    def forward(self, rgb_image,
                 object_input_pts, init_object_old_center, object_num_bones,
                 object_joint_tree, object_primitive_align, object_joint_parameter_leaf,
-                cam_trans,
-                layer, facet, bin):
+                cam_trans):
         batch_size = rgb_image.size(0)
         # extract feature of the whole image
 
@@ -451,14 +452,16 @@ class ObjectNetwork_pts(nn.Module):
         vit_feature_whole = whole_result['x_norm_patchtokens']
         vit_feature_whole = torch.reshape(vit_feature_whole, (batch_size, 16, 16, -1))
 
+        '''
         transform = torchvision.transforms.Compose([torchvision.transforms.Normalize(mean=0.5, std=0.2)])
         o_image = transform(o_image)
         object_result = self.object_vitextractor.forward_features(o_image)
         vit_feature_object = object_result['x_norm_patchtokens']
         vit_feature_object = torch.reshape(vit_feature_object, (batch_size, 16, 16, -1))
         ################### for DINOv2 ###################
+        '''
 
-        total_vit_feature = vit_feature_whole + vit_feature_object
+        total_vit_feature = vit_feature_whole #  + vit_feature_object
 
         # # check.
         total_vit_feature = torch.permute(total_vit_feature, (0, 3, 1, 2))
@@ -523,20 +526,18 @@ class Network_pts(nn.Module):
         self.object_network = ObjectNetwork_pts(graphAE_param, test_mode, model_type, stride, device, vit_f_dim, hidden_dim=hidden_dim, bone_num=object_bone_num)
 
     def forward(self,
-                rgb_image, o_image,
+                rgb_image,
                 object_input_pts, init_object_old_center, object_num_bones,
                 object_joint_tree, object_primitive_align, object_joint_parameter_leaf,
-                cam_trans,
-                layer, facet, bin
+                cam_trans
                 ):
 
         object_deformed, object_deformed_part_center, object_pred_rotmat_root, \
         object_pred_angle_leaf, object_pred_total_trans, new_pivot_loc = self.object_network(
-            rgb_image, o_image,
+            rgb_image,
             object_input_pts, init_object_old_center, object_num_bones,
             object_joint_tree, object_primitive_align, object_joint_parameter_leaf,
-            cam_trans,
-            layer, facet, bin)
+            cam_trans)
 
         pred_dict = {}
         pred_dict['deformed_object'] = object_deformed

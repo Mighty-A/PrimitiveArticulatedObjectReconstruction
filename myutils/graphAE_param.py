@@ -43,9 +43,9 @@ class Parameters():
         self.w_pose = float(config.get("Params", "w_pose"))
         self.w_laplace = float(config.get("Params", "w_laplace"))
 
-        self.pcs_train = config.get("Params", "pcs_train")
-        self.pcs_evaluate = config.get("Params", "pcs_evaluate")
-        self.pcs_test = config.get("Params", "pcs_test")
+        # self.pcs_train = config.get("Params", "pcs_train")
+        # self.pcs_evaluate = config.get("Params", "pcs_evaluate")
+        # self.pcs_test = config.get("Params", "pcs_test")
         # self.pcs_mean = config.get("Params", "pcs_mean")
         self.template_ply_fn = config.get("Params", "template_ply_fn")
         self.point_num = int(config.get("Params", "point_num"))
@@ -59,13 +59,13 @@ class Parameters():
         data = np.load(self.initial_connection_fn)
         neighbor_id_dist_lstlst = data[:, 1:]  # point_num*(1+2*neighbor_num)
         self.point_num = data.shape[0]
-        self.neighbor_id_lstlst = neighbor_id_dist_lstlst.reshape((self.point_num, -1, 2))[:, :,
-                                  0]  # point_num*neighbor_num
+        self.neighbor_id_lstlst = neighbor_id_dist_lstlst.reshape((self.point_num, -1, 2))[:, :, 0]  # point_num*neighbor_num
         self.neighbor_num_lst = np.array(data[:, 0])  # point_num
 
         self.connection_folder = config.get("Params", "connection_folder")
         self.connection_layer_lst = json.loads(config.get("Params", "connection_layer_lst"))
         ##load neighborlstlst_fn_lst
+        
         self.connection_layer_fn_lst = []
         fn_lst = os.listdir(self.connection_folder)
         for layer_name in self.connection_layer_lst:
@@ -79,6 +79,7 @@ class Parameters():
                     break
             if (find_fn == False):
                 print ("!!!ERROR: cannot find the connection layer fn")
+
 
         self.channel_lst = json.loads(config.get("Params", "channel_lst"))
         self.weight_num_lst = json.loads(config.get("Params", "weight_num_lst"))

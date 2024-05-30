@@ -1,0 +1,9 @@
+/output_dir
+/logs
+/README.pdf
+/d3dhoi_video_data
+
+__pycache__/
+.DS_Store
+.vscode/
+build/
