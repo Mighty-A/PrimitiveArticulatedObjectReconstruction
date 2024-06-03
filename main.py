@@ -18,14 +18,18 @@ import datasets
 from pytorch3d.io import load_ply
 from plyfile import PlyData
 
+
 try:
     from yaml import CLoader as Loader
 except ImportError:
     from yaml import Loader
 
-from renderer_nvdiff import Nvdiffrast
+from renderer_nvdiff import Nvdiffrast, render
 from networks.baseline_network import Network_pts
 from myutils.graphAE_param import Parameters
+
+from myutils.tools import compute_rotation_matrix_from_ortho6d
+from visualization_utils import points_on_sq_surface_torch
 
 """ taken from https://stackoverflow.com/questions/15008758/parsing-boolean-values-with-argparse"""
 def str2bool(v):
@@ -187,52 +191,6 @@ def load_checkpoints(model, optimizer, experiment_directory, args, device):
         )
 
 
-def load_init_template_data(path):
-    data_path_dict = scipy.io.loadmat(
-                                      )
-    data_dict = {}
-
-    init_object_sq = np.load(data_path_dict['object_init_sq_path'][0])
-    data_dict['init_object_sq'] = torch.Tensor(init_object_sq).cuda()
-    init_object_rots = np.load(data_path_dict['object_init_rots_path'][0])
-    data_dict['init_object_rots'] = torch.Tensor(init_object_rots).cuda()
-    init_object_old_center = np.load(data_path_dict['object_init_old_center_path'][0])
-    data_dict['init_object_old_center'] = torch.Tensor(init_object_old_center).cuda()
-
-    data_dict['object_axle'] = data_path_dict['object_axle'][0]
-    data_dict['object_num_bones'] = data_path_dict['object_num_bones'][0][0]
-
-    return data_dict
-
-def load_init_SQ_template_data(path):
-    joint_info_path = os.path.join(path, 'joint_info.mat')
-    part_centers_path = os.path.join(path, 'part_centers.npy')
-    ply_path = os.path.join(path, 'plys')
-    delta_rots_path =  os.path.join(ply_path, 'delta_rots.npy')
-    pred_rots_path = os.path.join(ply_path, "pred_rots.npy")
-    pre_sq_path = os.path.join(ply_path, "pred_sq.npy")
-
-    data_dict = {}
-
-    joint_info = scipy.io.loadmat(joint_info_path)
-    data_dict['joint_info'] = joint_info
-    data_dict["init_object_old_center"] = np.load(part_centers_path)
-    data_dict['object_joint_tree'] = joint_info['joint_tree']
-    data_dict['object_primitive_align'] = joint_info['primitive_align']
-    data_dict['object_joint_parameter_leaf'] = joint_info['joint_parameter_leaf']
-    data_dict['object_num_bones'] = joint_info['joint_tree'].shape[1]
-
-    pts = []
-    for i in range(data_dict["object_num_bones"]):
-        ply_data = PlyData.read(os.path.join(ply_path, "SQ_ply", f"{i}.ply"))
-
-        pts.append(ply_data['vertex'])
-
-    data_dict['object_input_pts'] = pts
-
-    return data_dict
-
-
 def test():
     print ('To be finished...')
 
@@ -281,7 +239,6 @@ def train():
 
     print("-----[Build NN]")
     net = Network_pts(
-        graphAE_param=graphAE_params,
         test_mode=args.mode == 'test',
         device=device,
         stride=args.stride,
@@ -290,7 +247,7 @@ def train():
     ) # Finished TODO: Create the network
     if torch.cuda.device_count() > 1:
         net = torch.nn.DataParallel(net)
-    
+
     # net.cuda()
 
     # Build an optimizer object to compute the gradients of the parameters
@@ -325,8 +282,6 @@ def train():
     train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size_train, shuffle=True, num_workers=1, drop_last=True, collate_fn=collate_fn)
     val_dataset = datasets.Datasets(datamat_path=data_tag_path, train=False, image_size=args.res, data_load_ratio=args.data_load_ratio)
     val_dataloader = torch.utils.data.DataLoader(val_dataset, batch_size=args.batch_size_val, shuffle=False, num_workers=1, collate_fn=collate_fn)
-    # init_template_data_dict = load_init_template_data(args.data_path)
-    init_template_data_dict = load_init_SQ_template_data(os.path.join(args.SQ_template_path, args.experiment_tag))
     print ('Dataloader finished!')
 
     # TODO: create the differtiable renderer
@@ -342,36 +297,64 @@ def train():
         iter_num = 0.
         for _, X in enumerate(tqdm(train_dataloader)):
             data_dict = X
-
-            # TODO: load all the data you need from dataloader, not limited
+            batch_size = data_dict['rgb'].shape[0]
+            # Finished TODO: load all the data you need from dataloader, not limited
             image_names = data_dict['image_name']
             rgb_image = data_dict['rgb'].cuda()
             object_white_mask = data_dict['o_mask'].cuda()
             info3d = data_dict['info_3d']
             joint_state = data_dict['joint_state']
-            object_input_pts = init_template_data_dict["object_input_pts"]
-            init_object_old_center = init_template_data_dict["init_object_old_center"]
-            object_num_bones = init_template_data_dict['object_num_bones']
-            object_joint_tree = init_template_data_dict['object_joint_tree']
-            object_primitive_align = init_template_data_dict["object_primitive_align"]
-            object_joint_parameter_leaf = init_template_data_dict["object_joint_parameter_leaf"]
-            cam_trans = None # seems useless
-            # TODO: pass the input data to the network and generate the predictions
+
+            # Finished TODO: pass the input data to the network and generate the predictions
             pred_dict = net(
-                rgb_image,
-                object_input_pts,
-                init_object_old_center,
-                object_num_bones,
-                object_joint_tree,
-                object_primitive_align,
-                object_joint_parameter_leaf,
-                cam_trans
+                rgb_image
             )
+            pred_root_rot6d = pred_dict['pred_root_rot6d']
+            pred_root_trans = pred_dict["pred_root_trans"] 
+            pred_root_shape = pred_dict['pred_root_shape'] 
+            pred_root_size = pred_dict['pred_root_size']
+            pred_root_rot_angle = pred_dict["pred_root_rot_angle"] 
+            pred_leaf_rot_angle = pred_dict["pred_leaf_rot_angle"] 
+            pred_leaf_shape = pred_dict["pred_leaf_shape"]
+            pred_leaf_size = pred_dict['pred_leaf_size']
 
-            print(pred_dict)
-            image = renderer(pred_dict["deformed_object"])
+            batch_rotation_matrix = compute_rotation_matrix_from_ortho6d(pred_root_rot6d)
 
-            # TODO: compute loss functions
+            batch_mesh = []
+
+            for i in range(batch_size):
+                # root object
+                a1 = pred_root_size[i, 0]
+                a2 = pred_root_size[i, 1]
+                a3 = pred_root_size[i, 2]
+                e1 = pred_root_shape[i, 0]
+                e2 = pred_root_shape[i, 1]
+                R=batch_rotation_matrix[i]
+                t=pred_root_trans[i]
+                t = t.unsqueeze(1)
+                _, _, _, points_root =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=100)
+
+                height, width = rgb_image.shape[1], rgb_image.shape[2]
+                root_image = render(points_root, vertex_colors=torch.zeros_like(points_root), resolution=(height, width))
+                print(root_image)
+
+                # leaf object
+                a1 = pred_leaf_size[i, 0, 0]
+                a2 = pred_leaf_size[i, 0, 1]
+                a3 = pred_leaf_size[i, 0, 2]
+                e1 = pred_leaf_shape[i, 0, 0]
+                e2 = pred_leaf_shape[i, 0, 1]
+
+                # TODO
+                R = None
+                t = None
+
+                _, _, _, points_leaf =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=100)
+
+                points = torch.stack([points_root, points_leaf], dim=0)
+
+                # render the image and calculate loss
+
             loss = torch.nn.functional.mse_loss(image, object_white_mask)
 
             # TODO: write the loss to tensorboard

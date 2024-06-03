@@ -1,4 +1,5 @@
 import os
+import torch
 import numpy as np
 import pickle
 
@@ -9,11 +10,19 @@ from pyquaternion import Quaternion
 def fexp(x, p):
     return np.sign(x)*(np.abs(x)**p)
 
+def fexp_torch(x, p):
+    return torch.sign(x)*(torch.abs(x)**p)
 
 def sq_surface(a1, a2, a3, e1, e2, eta, omega):
     x = a1 * fexp(np.cos(eta), e1) * fexp(np.cos(omega), e2)
     y = a2 * fexp(np.cos(eta), e1) * fexp(np.sin(omega), e2)
     z = a3 * fexp(np.sin(eta), e1)
+    return x, y, z
+
+def sq_surface_torch(a1, a2, a3, e1, e2, eta, omega):
+    x = a1 * fexp_torch(torch.cos(eta), e1) * fexp_torch(torch.cos(omega), e2)
+    y = a2 * fexp_torch(torch.cos(eta), e1) * fexp_torch(torch.sin(omega), e2)
+    z = a3 * fexp_torch(torch.sin(eta), e1)
     return x, y, z
 
 
@@ -31,6 +40,28 @@ def points_on_sq_surface(a1, a2, a3, e1, e2, R, t, n_samples=100):
     # Get an array of size 3x10000 that contains the points of the SQ
     points = np.stack([x, y, z]).reshape(3, -1)
     points_transformed = R.T.dot(points) + t
+
+    x_tr = points_transformed[0].reshape(n_samples, n_samples)
+    y_tr = points_transformed[1].reshape(n_samples, n_samples)
+    z_tr = points_transformed[2].reshape(n_samples, n_samples)
+
+    return x_tr, y_tr, z_tr, points_transformed
+
+
+def points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=100):
+    """Computes a SQ given a set of parameters and saves it into a tensor array"""
+    assert R.shape == (3, 3)
+    assert t.shape == (3, 1)
+
+    eta = torch.linspace(-torch.pi / 2, torch.pi / 2, n_samples).cuda()
+    omega = torch.linspace(-torch.pi, torch.pi, n_samples).cuda()
+    eta, omega = torch.meshgrid(eta, omega, indexing="ij")
+
+    x, y, z = sq_surface_torch(a1, a2, a3, e1, e2, eta, omega)
+
+    # Get a tensor of size 3x10000 that contains the points of the SQ
+    points = torch.stack([x, y, z]).reshape(3, -1)
+    points_transformed = R.T @ points + t
 
     x_tr = points_transformed[0].reshape(n_samples, n_samples)
     y_tr = points_transformed[1].reshape(n_samples, n_samples)
@@ -107,6 +138,7 @@ def _from_primitive_parms_to_mesh(primitive_params):
         m.visual.face_colors[i] = color
 
     return m
+
 
 
 def _from_primitive_parms_to_mesh_v2(verts, color):
@@ -233,3 +265,7 @@ def save_prediction_as_ply_v6(vert_list, face_list, colors, filepath):
     for bone_i in range(bone_num):
         m = _from_primitive_parms_to_mesh_v4(vert_list[bone_i], face_list[bone_i], (colors[bone_i % len(colors)]) + (1.0,))
         m.export(os.path.join(filepath, str(bone_i) + '.ply'), file_type="ply")
+
+
+_, _, _, pts = points_on_sq_surface(1, 1, 1, 1, 1, np.eye(3), np.zeros((3, 1)), n_samples=100)
+print(pts)

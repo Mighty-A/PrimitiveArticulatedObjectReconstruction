@@ -292,3 +292,25 @@ class NvdiffrastColorANDIdx(object):
         idx_map, color_map = self.render_idx_and_color(v_pos_clip, faces, mesh.primitives, mesh.colors, render_reso)
 
         return idx_map, color_map
+
+
+def render(
+    vertices,
+    vertex_colors,
+    resolution=(512, 512)
+):
+    
+    ctx = dr.RasterizeGLContext()
+
+    
+
+    
+    rast_out, _ = dr.rasterize(ctx, vertices, resolution)
+
+    
+    color, _ = dr.interpolate(vertex_colors, rast_out)
+    
+    
+    image = dr.antialias(color, rast_out)
+
+    return image
