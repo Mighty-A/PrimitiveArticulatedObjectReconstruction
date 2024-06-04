@@ -60,7 +60,7 @@ class RootShapePredictor(nn.Module):
         out = self.fc(feat)
         out = self.relu(out)
         out = self.out(out)
-        out = self.sigmoid(out) * 2
+        out = self.sigmoid(out) * 1.8 + 0.1
         return out
 
 
@@ -70,13 +70,13 @@ class RootSizePredictor(nn.Module):
         self.fc = nn.Linear(in_dim, hidden_dim)
         self.relu = nn.ReLU()
         self.out = nn.Linear(hidden_dim, out_dim)
-        self.relu2 = nn.ReLU()
+        
 
     def forward(self, feat):
         out = self.fc(feat)
         out = self.relu(out)
         out = self.out(out)
-        out = self.relu2(out)
+        out = torch.exp(out)
         return out
 
 
@@ -102,7 +102,7 @@ class LeafShapePredictor(nn.Module):
         preds = []
         for i in range(self.num_bones):
             x = self.fcs[i](feat)
-            x = x * 2
+            x = x * 1.8 + 0.1
             x = torch.reshape(x, (batch_size, 1, self.out_dim))
             preds.append(x)
 
@@ -117,7 +117,7 @@ class LeafSizePredictor(nn.Module):
         self.num_bones = bone_nums
         self.out_dim = out_dim
         predictor_block = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, out_dim), nn.ReLU()
+            nn.Linear(in_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, out_dim)
         )
 
         self.fcs = nn.ModuleList([predictor_block for i in range(self.num_bones)])
@@ -128,6 +128,7 @@ class LeafSizePredictor(nn.Module):
         preds = []
         for i in range(self.num_bones):
             x = self.fcs[i](feat)
+            x = torch.exp(x)
             x = torch.reshape(x, (batch_size, 1, self.out_dim))
             preds.append(x)
 

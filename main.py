@@ -59,7 +59,7 @@ parser.add_argument('--vit_f_dim', type=int, default=384) # dinov2
 parser.add_argument("--model_type", type=str, default="dinov2_vits14")
 # parser.add_argument('--res', type=int, default=112)
 parser.add_argument('--res', type=int, default=224)
-parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate.')
+parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate.')
 parser.add_argument("--annealing_lr", type=bool, default=True, help="Whether to use annealing learning rate.")
 parser.add_argument('--batch_size_train', type=int, default=32, help='Batch size of the training dataloader.')
 parser.add_argument('--batch_size_val', type=int, default=1, help='Batch size of the val dataloader.')
@@ -356,6 +356,7 @@ def train():
             object_white_mask = data_dict['o_mask'].cuda()
             info3d = data_dict['info_3d']
             joint_state = data_dict['joint_state']
+            height, width = 256, 256
 
             # Finished TODO: pass the input data to the network and generate the predictions
             pred_dict = net(
@@ -376,6 +377,7 @@ def train():
 
             for i in range(batch_size):
                 # root object
+                
                 a1 = pred_root_size[i, 0]
                 a2 = pred_root_size[i, 1]
                 a3 = pred_root_size[i, 2]
@@ -385,7 +387,7 @@ def train():
                 t=pred_root_trans[i]
                 t = t.unsqueeze(1)
                 points_root, faces =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=20)
-                height, width = 256, 256
+                
                 root_image = render(
                     points_root,
                     vertex_colors=torch.tensor([[[1, 0, 0]]], dtype=torch.float32).repeat(1, points_root.shape[0], 1).cuda(),
@@ -416,12 +418,15 @@ def train():
                 points_leaf, faces_leaf =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=20)
                 leaf_image = render(
                     points_leaf,
-                    vertex_colors=torch.ones_like(points_leaf),
+                    vertex_colors=torch.tensor([[[1, 0, 0]]], dtype=torch.float32)
+                    .repeat(1, points_leaf.shape[0], 1)
+                    .cuda(),
                     faces=faces_leaf,
                     resolution=(height, width),
                 )
+
+                batch_image.append(torch.clip(root_image[0, :, :, 0] +  leaf_image[0, :, :, 0] , 0., 1.))
                 
-                batch_image.append(torch.clip(root_image[0, :, :, 0] + leaf_image[0, :, :, 0] , 0., 1.))
             batch_image = torch.stack(batch_image, dim=0)
             loss = torch.nn.functional.mse_loss(batch_image, object_white_mask.float())
 
@@ -501,7 +506,14 @@ def train():
                     points_root, faces =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=20)
 
                     height, width = 256, 256
-                    root_image = render(points_root, vertex_colors=torch.ones_like(points_root), faces=faces, resolution=(height, width))
+                    root_image = render(
+                        points_root,
+                        vertex_colors=torch.tensor([[[1, 0, 0]]], dtype=torch.float32)
+                        .repeat(1, points_root.shape[0], 1)
+                        .cuda(),
+                        faces=faces,
+                        resolution=(height, width),
+                    )
                     plt.imshow(root_image[0, :, :, :3].detach().cpu().numpy())
                     plt.savefig("/home/liweiting/yhy/term_project/temp/test.pdf")
                     # leaf object
@@ -524,10 +536,12 @@ def train():
                         leaf_size=pred_leaf_size[i, 0]
                     )
                     t = t.unsqueeze(1)
-                    points_leaf, faces_leaf =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=20)
+                    points_leaf, faces_leaf = points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=20)
                     leaf_image = render(
                         points_leaf,
-                        vertex_colors=torch.ones_like(points_leaf),
+                        vertex_colors=torch.tensor([[[1, 0, 0]]], dtype=torch.float32)
+                        .repeat(1, points_leaf.shape[0], 1)
+                        .cuda(),
                         faces=faces_leaf,
                         resolution=(height, width),
                     )
