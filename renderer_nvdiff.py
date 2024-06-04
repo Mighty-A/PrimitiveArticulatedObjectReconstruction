@@ -328,4 +328,4 @@ if __name__ == '__main__':
     image = torch.pow(image, 1/10)
     from matplotlib import pyplot as plt
     plt.imshow(image[0, :, :, 0].detach().cpu().numpy())
-    plt.savefig("/home/liweiting/yhy/term_project/temp/test.pdf")
+    plt.savefig("temp/test.pdf")

@@ -444,13 +444,6 @@ def train():
             iter_num += 1
             optimizer.zero_grad()
             loss.backward()
-            print("image grad norm:", torch.norm(batch_image.grad))
-            print("vert grad norm: ", torch.sum(points_root.grad))
-            '''
-            for name, param in net.named_parameters():
-                if param.grad is not None:
-                    print(f'Parameter: {name}, Grad: {param.grad}')
-            '''
 
             # torch.nn.utils.clip_grad_norm_(net.parameters(), 1)
             if args.annealing_lr:
@@ -526,7 +519,7 @@ def train():
                         faces=faces,
                         resolution=(height, width),
                     )
-                    print(f"prediction for {image_names[i]}, \n    root a1: {a1}, a2: {a2}, a3: {a3}, e1: {e1}, e2: {e2}, R: {R}, t: {t}")
+                    # print(f"prediction for {image_names[i]}, \n    root a1: {a1}, a2: {a2}, a3: {a3}, e1: {e1}, e2: {e2}, R: {R}, t: {t}")
 
                     # leaf object
                     a1 = pred_leaf_size[i, 0, 0]
@@ -534,9 +527,9 @@ def train():
                     a3 = pred_leaf_size[i, 0, 2]
                     e1 = pred_leaf_shape[i, 0, 0]
                     e2 = pred_leaf_shape[i, 0, 1]
-                    print(
-                        f"    leaf  a1: {a1}, a2: {a2}, a3: {a3}, e1: {e1}, e2: {e2}, R: {R}, t: {t}"
-                    )
+                    # print(
+                    #     f"    leaf  a1: {a1}, a2: {a2}, a3: {a3}, e1: {e1}, e2: {e2}, R: {R}, t: {t}"
+                    # )
                     # TODO
                     R = get_pred_leaf_rot6d(pred_root_rot6d[i], pred_leaf_rot_angle[i])
                     t = get_pred_leaf_trans(
@@ -564,9 +557,9 @@ def train():
                 batch_image = torch.stack(batch_image, dim=0)
                 loss = torch.nn.functional.mse_loss(batch_image,  object_white_mask.float())
                 plt.imshow(batch_image[0, :, :].detach().cpu().numpy())
-                plt.savefig("/home/liweiting/yhy/term_project/temp/test.pdf")
+                plt.savefig("temp/test.pdf")
                 plt.imshow(object_white_mask.float()[0, :, :].detach().cpu().numpy())
-                plt.savefig("/home/liweiting/yhy/term_project/temp/test-gt.pdf")
+                plt.savefig("temp/test-gt.pdf")
                 total_eval_loss += loss.item()
 
                 if epoch % args.save_every == 0:

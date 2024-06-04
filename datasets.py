@@ -11,9 +11,6 @@ import pytorch3d.structures as p3dstr
 import torchvision.transforms.functional as F
 import pickle
 
-import sys
-sys.path.append('/home/liweiting/yhy/term_project')
-
 
 class Resize_with_pad:
     def __init__(self, w=224, h=224):

@@ -4,11 +4,11 @@
 {
     "distutils": {
         "depends": [
-            "/home/liweiting/miniconda3/envs/primreg/lib/python3.9/site-packages/numpy/core/include/numpy/arrayobject.h",
-            "/home/liweiting/miniconda3/envs/primreg/lib/python3.9/site-packages/numpy/core/include/numpy/arrayscalars.h",
-            "/home/liweiting/miniconda3/envs/primreg/lib/python3.9/site-packages/numpy/core/include/numpy/ndarrayobject.h",
-            "/home/liweiting/miniconda3/envs/primreg/lib/python3.9/site-packages/numpy/core/include/numpy/ndarraytypes.h",
-            "/home/liweiting/miniconda3/envs/primreg/lib/python3.9/site-packages/numpy/core/include/numpy/ufuncobject.h",
+            "/mnt/homes/xinyu-ldap/bin/miniconda3/envs/primreg/lib/python3.8/site-packages/numpy/core/include/numpy/arrayobject.h",
+            "/mnt/homes/xinyu-ldap/bin/miniconda3/envs/primreg/lib/python3.8/site-packages/numpy/core/include/numpy/arrayscalars.h",
+            "/mnt/homes/xinyu-ldap/bin/miniconda3/envs/primreg/lib/python3.8/site-packages/numpy/core/include/numpy/ndarrayobject.h",
+            "/mnt/homes/xinyu-ldap/bin/miniconda3/envs/primreg/lib/python3.8/site-packages/numpy/core/include/numpy/ndarraytypes.h",
+            "/mnt/homes/xinyu-ldap/bin/miniconda3/envs/primreg/lib/python3.8/site-packages/numpy/core/include/numpy/ufuncobject.h",
             "learnable_primitives/fast_sampler/sampling.hpp"
         ],
         "extra_compile_args": [
@@ -17,8 +17,8 @@
         ],
         "include_dirs": [
             "learnable_primitives/fast_sampler",
-            "/home/liweiting/yhy/term_project/learnable_primitives/fast_sampler",
-            "/home/liweiting/miniconda3/envs/primreg/lib/python3.9/site-packages/numpy/core/include"
+            "learnable_primitives/fast_sampler",
+            "/mnt/homes/xinyu-ldap/bin/miniconda3/envs/primreg/lib/python3.8/site-packages/numpy/core/include"
         ],
         "language": "c++",
         "libraries": [
