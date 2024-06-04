@@ -62,12 +62,23 @@ def points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=100):
     # Get a tensor of size 3x10000 that contains the points of the SQ
     points = torch.stack([x, y, z]).reshape(3, -1)
     points_transformed = R.T @ points + t
+    
+    points = points_transformed.transpose(1, 0)
+    w = torch.ones((points.shape[0], 1)).cuda()
+    points = torch.cat((points, w), dim=1)
+    faces = []
+    for i in range(n_samples - 1):
+        for j in range(n_samples - 1):
+            p1 = i * n_samples + j
+            p2 = p1 + n_samples
+            p3 = p2 + 1
+            p4 = p1 + 1
+            faces.append([p1, p2, p3])
+            faces.append([p1, p3, p4])
+    faces = torch.IntTensor(faces).cuda()
 
-    x_tr = points_transformed[0].reshape(n_samples, n_samples)
-    y_tr = points_transformed[1].reshape(n_samples, n_samples)
-    z_tr = points_transformed[2].reshape(n_samples, n_samples)
 
-    return x_tr, y_tr, z_tr, points_transformed
+    return points, faces
 
 
 def points_on_cuboid(a1, a2, a3, e1, e2, R, t, n_samples=100):
@@ -138,7 +149,6 @@ def _from_primitive_parms_to_mesh(primitive_params):
         m.visual.face_colors[i] = color
 
     return m
-
 
 
 def _from_primitive_parms_to_mesh_v2(verts, color):
@@ -267,5 +277,3 @@ def save_prediction_as_ply_v6(vert_list, face_list, colors, filepath):
         m.export(os.path.join(filepath, str(bone_i) + '.ply'), file_type="ply")
 
 
-_, _, _, pts = points_on_sq_surface(1, 1, 1, 1, 1, np.eye(3), np.zeros((3, 1)), n_samples=100)
-print(pts)

@@ -1,5 +1,4 @@
 import os
-os.environ['PYOPENGL_PLATFORM'] = 'egl'
 import nvdiffrast.torch as dr
 import trimesh
 import torch
@@ -297,20 +296,31 @@ class NvdiffrastColorANDIdx(object):
 def render(
     vertices,
     vertex_colors,
+    faces,
     resolution=(512, 512)
 ):
-    
-    ctx = dr.RasterizeGLContext()
 
-    
+    ctx = dr.RasterizeCudaContext()
 
-    
-    rast_out, _ = dr.rasterize(ctx, vertices, resolution)
+    vertices.unsqueeze_(0)
+    rast_out, _ = dr.rasterize(ctx, vertices, faces, resolution)
 
-    
-    color, _ = dr.interpolate(vertex_colors, rast_out)
-    
-    
-    image = dr.antialias(color, rast_out)
+    image, _ = dr.interpolate(vertex_colors, rast_out, faces)
+
 
     return image
+
+
+if __name__ == '__main__':
+    from visualization_utils import points_on_sq_surface_torch
+
+    vert, faces = points_on_sq_surface_torch(0.5, 0.5, 0.5, 1, 1, torch.eye(3).cuda(), torch.Tensor([0, 0, 0]).reshape(3, 1).cuda(), n_samples=10)
+
+    
+    col = torch.tensor([[[1, 0, 0]]], dtype=torch.float32).repeat(1, vert.shape[0], 1).cuda()
+    
+
+    image = render(vertices=vert, vertex_colors=col, faces=faces)
+    from matplotlib import pyplot as plt
+    plt.imshow(image[0].cpu().numpy())
+    plt.savefig("/home/liweiting/yhy/term_project/temp/test.pdf")

@@ -17,21 +17,6 @@ from learnable_primitives.equal_distance_sampler_sq import get_sampler
 from myutils.tools import compute_rotation_matrix_from_ortho6d
 
 
-class TransPredictor(nn.Module):
-    """
-    Outputs [tx, ty] or [tx, ty, tz]
-    """
-
-    def __init__(self, nz, orth=False):
-        super(TransPredictor, self).__init__()
-        if orth:
-            self.pred_layer = nn.Linear(nz, 2)
-        else:
-            self.pred_layer = nn.Linear(nz, 3)
-
-    def forward(self, feat):
-        trans = self.pred_layer(feat)
-        return trans
 
 
 class RootRot6dPredictor(nn.Module):
@@ -69,12 +54,13 @@ class RootShapePredictor(nn.Module):
         self.fc = nn.Linear(in_dim, hidden_dim)
         self.relu = nn.ReLU()
         self.out = nn.Linear(hidden_dim, out_dim)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, feat):
         out = self.fc(feat)
         out = self.relu(out)
         out = self.out(out)
-
+        out = self.sigmoid(out) * 2
         return out
 
 
@@ -84,12 +70,13 @@ class RootSizePredictor(nn.Module):
         self.fc = nn.Linear(in_dim, hidden_dim)
         self.relu = nn.ReLU()
         self.out = nn.Linear(hidden_dim, out_dim)
+        self.relu2 = nn.ReLU()
 
     def forward(self, feat):
         out = self.fc(feat)
         out = self.relu(out)
         out = self.out(out)
-
+        out = self.relu2(out)
         return out
 
 
@@ -101,7 +88,8 @@ class LeafShapePredictor(nn.Module):
         predictor_block = nn.Sequential(
             nn.Linear(in_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, out_dim)
+            nn.Linear(hidden_dim, out_dim),
+            nn.Sigmoid()
         )
 
         self.fcs = nn.ModuleList(
@@ -114,6 +102,7 @@ class LeafShapePredictor(nn.Module):
         preds = []
         for i in range(self.num_bones):
             x = self.fcs[i](feat)
+            x = x * 2
             x = torch.reshape(x, (batch_size, 1, self.out_dim))
             preds.append(x)
 
@@ -128,7 +117,7 @@ class LeafSizePredictor(nn.Module):
         self.num_bones = bone_nums
         self.out_dim = out_dim
         predictor_block = nn.Sequential(
-            nn.Linear(in_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, out_dim)
+            nn.Linear(in_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, out_dim), nn.ReLU()
         )
 
         self.fcs = nn.ModuleList([predictor_block for i in range(self.num_bones)])
