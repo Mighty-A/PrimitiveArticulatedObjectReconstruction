@@ -39,11 +39,13 @@ class RootTransPredictor(nn.Module):
         self.fc = nn.Linear(in_dim, hidden_dim)
         self.relu = nn.ReLU()
         self.out = nn.Linear(hidden_dim, out_dim)
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, feat):
         out = self.fc(feat)
         out = self.relu(out)
         out = self.out(out)
+        out = self.sigmoid(out) * 2. - 1.
 
         return out
 

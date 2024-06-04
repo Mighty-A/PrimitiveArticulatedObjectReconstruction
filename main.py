@@ -16,6 +16,7 @@ import string
 import random
 import datasets
 from pytorch3d.io import load_ply
+from pytorch3d import renderer
 from plyfile import PlyData
 from matplotlib import pyplot as plt
 import pytorch3d.transforms.rotation_conversions as rc
@@ -59,10 +60,10 @@ parser.add_argument('--vit_f_dim', type=int, default=384) # dinov2
 parser.add_argument("--model_type", type=str, default="dinov2_vits14")
 # parser.add_argument('--res', type=int, default=112)
 parser.add_argument('--res', type=int, default=224)
-parser.add_argument('--lr', type=float, default=1e-3, help='Learning rate.')
+parser.add_argument('--lr', type=float, default=1e-5, help='Learning rate.')
 parser.add_argument("--annealing_lr", type=bool, default=True, help="Whether to use annealing learning rate.")
 parser.add_argument('--batch_size_train', type=int, default=32, help='Batch size of the training dataloader.')
-parser.add_argument('--batch_size_val', type=int, default=1, help='Batch size of the val dataloader.')
+parser.add_argument('--batch_size_val', type=int, default=4, help='Batch size of the val dataloader.')
 parser.add_argument("--checkpoint_model_path", type=str, default=None, help="Path to the model checkpoint.")
 parser.add_argument('--data_path', type=str, default=os.path.join(file_dir, "d3dhoi_video_data"))
 parser.add_argument('--data_load_ratio', type=float, default=0.2, help='The ratio of the data to be loaded as valid')
@@ -295,7 +296,8 @@ def train():
         device=device,
         stride=args.stride,
         model_type=args.model_type,
-        vit_f_dim=args.vit_f_dim
+        vit_f_dim=args.vit_f_dim,
+        hidden_dim=256
     ) # Finished TODO: Create the network
     if torch.cuda.device_count() > 1:
         net = torch.nn.DataParallel(net)
@@ -337,7 +339,7 @@ def train():
     print ('Dataloader finished!')
 
     # TODO: create the differtiable renderer
-    renderer = Nvdiffrast(FOV=39.6)
+    renderer = Nvdiffrast()
     print ('Renderer set!')
 
     print ('Start Training!')
@@ -371,30 +373,33 @@ def train():
             pred_leaf_shape = pred_dict["pred_leaf_shape"]
             pred_leaf_size = pred_dict['pred_leaf_size']
 
-            batch_rotation_matrix = compute_rotation_matrix_from_ortho6d(pred_root_rot6d)
+            batch_rotation_matrix = rc.rotation_6d_to_matrix(pred_root_rot6d)
 
             batch_image = []
-
             for i in range(batch_size):
                 # root object
-                
+
                 a1 = pred_root_size[i, 0]
                 a2 = pred_root_size[i, 1]
                 a3 = pred_root_size[i, 2]
                 e1 = pred_root_shape[i, 0]
                 e2 = pred_root_shape[i, 1]
+                a1.retain_grad()
                 R=batch_rotation_matrix[i]
                 t=pred_root_trans[i]
                 t = t.unsqueeze(1)
-                points_root, faces =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=20)
-                
+                points_root, faces =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=10)
+
+                points_root.retain_grad()
                 root_image = render(
                     points_root,
                     vertex_colors=torch.tensor([[[1, 0, 0]]], dtype=torch.float32).repeat(1, points_root.shape[0], 1).cuda(),
                     faces=faces,
                     resolution=(height, width),
                 )
-                
+                # root_image = torch.pow(root_image, 1/2)
+                root_image.retain_grad()
+
                 # leaf object
                 a1 = pred_leaf_size[i, 0, 0]
                 a2 = pred_leaf_size[i, 0, 1]
@@ -415,7 +420,7 @@ def train():
                     leaf_size=pred_leaf_size[i, 0]
                 )
                 t = t.unsqueeze(1)
-                points_leaf, faces_leaf =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=20)
+                points_leaf, faces_leaf = points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=10)
                 leaf_image = render(
                     points_leaf,
                     vertex_colors=torch.tensor([[[1, 0, 0]]], dtype=torch.float32)
@@ -425,9 +430,10 @@ def train():
                     resolution=(height, width),
                 )
 
-                batch_image.append(torch.clip(root_image[0, :, :, 0] +  leaf_image[0, :, :, 0] , 0., 1.))
-                
+                batch_image.append(root_image[0, :, :, 0] )
+
             batch_image = torch.stack(batch_image, dim=0)
+            batch_image.retain_grad()
             loss = torch.nn.functional.mse_loss(batch_image, object_white_mask.float())
 
             # TODO: write the loss to tensorboard
@@ -438,8 +444,15 @@ def train():
             iter_num += 1
             optimizer.zero_grad()
             loss.backward()
+            print("image grad norm:", torch.norm(batch_image.grad))
+            print("vert grad norm: ", torch.sum(points_root.grad))
+            '''
+            for name, param in net.named_parameters():
+                if param.grad is not None:
+                    print(f'Parameter: {name}, Grad: {param.grad}')
+            '''
 
-            torch.nn.utils.clip_grad_norm_(net.parameters(), 0.01)
+            # torch.nn.utils.clip_grad_norm_(net.parameters(), 1)
             if args.annealing_lr:
                 scheduler.step()
             optimizer.step()
@@ -504,7 +517,6 @@ def train():
                     t=pred_root_trans[i]
                     t = t.unsqueeze(1)
                     points_root, faces =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=20)
-
                     height, width = 256, 256
                     root_image = render(
                         points_root,
@@ -514,15 +526,17 @@ def train():
                         faces=faces,
                         resolution=(height, width),
                     )
-                    plt.imshow(root_image[0, :, :, :3].detach().cpu().numpy())
-                    plt.savefig("/home/liweiting/yhy/term_project/temp/test.pdf")
+                    print(f"prediction for {image_names[i]}, \n    root a1: {a1}, a2: {a2}, a3: {a3}, e1: {e1}, e2: {e2}, R: {R}, t: {t}")
+
                     # leaf object
                     a1 = pred_leaf_size[i, 0, 0]
                     a2 = pred_leaf_size[i, 0, 1]
                     a3 = pred_leaf_size[i, 0, 2]
                     e1 = pred_leaf_shape[i, 0, 0]
                     e2 = pred_leaf_shape[i, 0, 1]
-
+                    print(
+                        f"    leaf  a1: {a1}, a2: {a2}, a3: {a3}, e1: {e1}, e2: {e2}, R: {R}, t: {t}"
+                    )
                     # TODO
                     R = get_pred_leaf_rot6d(pred_root_rot6d[i], pred_leaf_rot_angle[i])
                     t = get_pred_leaf_trans(
@@ -546,9 +560,11 @@ def train():
                         resolution=(height, width),
                     )
 
-                    batch_image.append(root_image[0, :, :, 0] + leaf_image[0, :, :, 0])
+                    batch_image.append(root_image[0, :, :, 0])
                 batch_image = torch.stack(batch_image, dim=0)
-                loss = torch.nn.functional.mse_loss(batch_image, object_white_mask.float())
+                loss = torch.nn.functional.mse_loss(batch_image,  object_white_mask.float())
+                plt.imshow(batch_image[0, :, :].detach().cpu().numpy())
+                plt.savefig("/home/liweiting/yhy/term_project/temp/test.pdf")
                 plt.imshow(object_white_mask.float()[0, :, :].detach().cpu().numpy())
                 plt.savefig("/home/liweiting/yhy/term_project/temp/test-gt.pdf")
                 total_eval_loss += loss.item()
@@ -563,6 +579,7 @@ def train():
 
                     # TODO: visualze the predicted results
             total_eval_loss = float(total_eval_loss) / float(iter_num) 
+            writer.add_scalar("eval/loss", total_eval_loss, epoch)
             print("[Epoch %d/%d] Total_Eval_loss = %f." % (epoch, epochs, total_eval_loss))
             print("====> Validation Epoch ====>")
 
