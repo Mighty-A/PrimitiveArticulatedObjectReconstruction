@@ -290,6 +290,35 @@ class NvdiffrastColorANDIdx(object):
         return idx_map, color_map
 
 
+def look_at(eye, center, up):
+    f = center - eye
+    f = f / np.linalg.norm(f)
+    u = up / np.linalg.norm(up)
+    s = np.cross(f, u)
+    u = np.cross(s, f)
+
+    m = np.eye(4, dtype=np.float32)
+    m[0, :3] = s
+    m[1, :3] = u
+    m[2, :3] = -f
+    translate = np.eye(4, dtype=np.float32)
+    translate[:3, 3] = -eye
+    return m @ translate
+
+
+def perspective(fovy, aspect, znear, zfar):
+    tan_half_fovy = np.tan(fovy / 2.0)
+    m = np.zeros((4, 4), dtype=np.float32)
+    m[0, 0] = 1.0 / (aspect * tan_half_fovy)
+    m[1, 1] = 1.0 / (tan_half_fovy)
+    m[2, 2] = -(zfar + znear) / (zfar - znear)
+    m[2, 3] = -1.0
+    m[3, 2] = -(2.0 * zfar * znear) / (zfar - znear)
+    return m
+
+
+
+
 def render(
     vertices,
     vertex_colors,

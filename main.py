@@ -68,7 +68,7 @@ parser.add_argument("--checkpoint_model_path", type=str, default=None, help="Pat
 parser.add_argument('--data_path', type=str, default=os.path.join(file_dir, "d3dhoi_video_data"))
 parser.add_argument('--data_load_ratio', type=float, default=0.2, help='The ratio of the data to be loaded as valid')
 parser.add_argument('--save_every', type=int, default=200)
-parser.add_argument('--val_every', type=int, default=50)
+parser.add_argument('--val_every', type=int, default=20)
 parser.add_argument('--continue_from_epoch', type=int, default=0)
 parser.add_argument('--config_path', type=str, default=os.path.join(file_dir, "config"))
 parser.add_argument('--SQ_template_path', type=str, default=os.path.join(file_dir, "SQ_templates"))
@@ -124,7 +124,6 @@ def get_pred_leaf_trans(
     R_root = rc.rotation_6d_to_matrix(root_rot6d)
 
     world_to_leaf = torch.matmul(R_root, leaf_origin_in_root_sys) + root_trans
-
     return world_to_leaf
 
 
@@ -388,28 +387,18 @@ def train():
                 R=batch_rotation_matrix[i]
                 t=pred_root_trans[i]
                 t = t.unsqueeze(1)
-                points_root, faces =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=10)
-
-                points_root.retain_grad()
-                root_image = render(
-                    points_root,
-                    vertex_colors=torch.tensor([[[1, 0, 0]]], dtype=torch.float32).repeat(1, points_root.shape[0], 1).cuda(),
-                    faces=faces,
-                    resolution=(height, width),
-                )
-                # root_image = torch.pow(root_image, 1/2)
-                root_image.retain_grad()
+                points_root, faces_root =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=20)
 
                 # leaf object
-                a1 = pred_leaf_size[i, 0, 0]
-                a2 = pred_leaf_size[i, 0, 1]
-                a3 = pred_leaf_size[i, 0, 2]
-                e1 = pred_leaf_shape[i, 0, 0]
-                e2 = pred_leaf_shape[i, 0, 1]
+                a1_leaf = pred_leaf_size[i, 0, 0]
+                a2_leaf = pred_leaf_size[i, 0, 1]
+                a3_leaf = pred_leaf_size[i, 0, 2]
+                e1_leaf = pred_leaf_shape[i, 0, 0]
+                e2_leaf = pred_leaf_shape[i, 0, 1]
 
                 # TODO
-                R = get_pred_leaf_rot6d(pred_root_rot6d[i], pred_leaf_rot_angle[i])
-                t = get_pred_leaf_trans(
+                R_leaf = get_pred_leaf_rot6d(pred_root_rot6d[i], pred_leaf_rot_angle[i])
+                t_leaf = get_pred_leaf_trans(
                     root_rot6d=pred_root_rot6d[i],
                     root_trans=pred_root_trans[i],
                     root_rot_angle=pred_root_rot_angle[i],
@@ -419,18 +408,24 @@ def train():
                     leaf_shape=pred_leaf_shape[i, 0],
                     leaf_size=pred_leaf_size[i, 0]
                 )
-                t = t.unsqueeze(1)
-                points_leaf, faces_leaf = points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=10)
-                leaf_image = render(
-                    points_leaf,
+                t_leaf = t_leaf.unsqueeze(1)
+
+                points_leaf, faces_leaf = points_on_sq_surface_torch(a1_leaf, a2_leaf, a3_leaf, e1_leaf, e2_leaf, R_leaf, t_leaf, n_samples=20)
+
+                points_whole = torch.cat((points_root, points_leaf), dim=0)
+                points_whole.retain_grad()
+                faces_whole = torch.cat((faces_root, faces_leaf + points_root.shape[0]), dim=0)
+                
+                image = render(
+                    points_whole,
                     vertex_colors=torch.tensor([[[1, 0, 0]]], dtype=torch.float32)
-                    .repeat(1, points_leaf.shape[0], 1)
+                    .repeat(1, points_whole.shape[0], 1)
                     .cuda(),
-                    faces=faces_leaf,
+                    faces=faces_whole,
                     resolution=(height, width),
                 )
 
-                batch_image.append(root_image[0, :, :, 0] )
+                batch_image.append(image[0, :, :, 0])
 
             batch_image = torch.stack(batch_image, dim=0)
             batch_image.retain_grad()
@@ -445,13 +440,14 @@ def train():
             optimizer.zero_grad()
             loss.backward()
             print("image grad norm:", torch.norm(batch_image.grad))
-            print("vert grad norm: ", torch.sum(points_root.grad))
+            print("vert grad norm: ", torch.norm(points_whole.grad))
             '''
             for name, param in net.named_parameters():
-                if param.grad is not None:
+                if "predictor" in name and param.grad is not None:
                     print(f'Parameter: {name}, Grad: {param.grad}')
+                    if torch.isnan(param.grad).any():
+                        exit()
             '''
-
             # torch.nn.utils.clip_grad_norm_(net.parameters(), 1)
             if args.annealing_lr:
                 scheduler.step()
@@ -470,7 +466,7 @@ def train():
             )
 
         if epoch % args.val_every == 0:
-            print("====> Validation Epoch ====>")
+            print("====> Validation Epoch Start ====>")
             net.eval()
 
             total_eval_loss = 0.
@@ -508,38 +504,28 @@ def train():
 
                 for i in range(batch_size):
                     # root object
+
                     a1 = pred_root_size[i, 0]
                     a2 = pred_root_size[i, 1]
                     a3 = pred_root_size[i, 2]
                     e1 = pred_root_shape[i, 0]
                     e2 = pred_root_shape[i, 1]
+                    a1.retain_grad()
                     R=batch_rotation_matrix[i]
                     t=pred_root_trans[i]
                     t = t.unsqueeze(1)
-                    points_root, faces =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=20)
-                    height, width = 256, 256
-                    root_image = render(
-                        points_root,
-                        vertex_colors=torch.tensor([[[1, 0, 0]]], dtype=torch.float32)
-                        .repeat(1, points_root.shape[0], 1)
-                        .cuda(),
-                        faces=faces,
-                        resolution=(height, width),
-                    )
-                    print(f"prediction for {image_names[i]}, \n    root a1: {a1}, a2: {a2}, a3: {a3}, e1: {e1}, e2: {e2}, R: {R}, t: {t}")
+                    points_root, faces_root =  points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=20)
 
                     # leaf object
-                    a1 = pred_leaf_size[i, 0, 0]
-                    a2 = pred_leaf_size[i, 0, 1]
-                    a3 = pred_leaf_size[i, 0, 2]
-                    e1 = pred_leaf_shape[i, 0, 0]
-                    e2 = pred_leaf_shape[i, 0, 1]
-                    print(
-                        f"    leaf  a1: {a1}, a2: {a2}, a3: {a3}, e1: {e1}, e2: {e2}, R: {R}, t: {t}"
-                    )
+                    a1_leaf = pred_leaf_size[i, 0, 0]
+                    a2_leaf = pred_leaf_size[i, 0, 1]
+                    a3_leaf = pred_leaf_size[i, 0, 2]
+                    e1_leaf = pred_leaf_shape[i, 0, 0]
+                    e2_leaf = pred_leaf_shape[i, 0, 1]
+
                     # TODO
-                    R = get_pred_leaf_rot6d(pred_root_rot6d[i], pred_leaf_rot_angle[i])
-                    t = get_pred_leaf_trans(
+                    R_leaf = get_pred_leaf_rot6d(pred_root_rot6d[i], pred_leaf_rot_angle[i])
+                    t_leaf = get_pred_leaf_trans(
                         root_rot6d=pred_root_rot6d[i],
                         root_trans=pred_root_trans[i],
                         root_rot_angle=pred_root_rot_angle[i],
@@ -549,18 +535,24 @@ def train():
                         leaf_shape=pred_leaf_shape[i, 0],
                         leaf_size=pred_leaf_size[i, 0]
                     )
-                    t = t.unsqueeze(1)
-                    points_leaf, faces_leaf = points_on_sq_surface_torch(a1, a2, a3, e1, e2, R, t, n_samples=20)
-                    leaf_image = render(
-                        points_leaf,
+                    t_leaf = t_leaf.unsqueeze(1)
+
+                    points_leaf, faces_leaf = points_on_sq_surface_torch(a1_leaf, a2_leaf, a3_leaf, e1_leaf, e2_leaf, R_leaf, t_leaf, n_samples=20)
+
+                    points_whole = torch.cat((points_root, points_leaf), dim=0)
+
+                    faces_whole = torch.cat((faces_root, faces_leaf + points_root.shape[0]), dim=0)
+
+                    image = render(
+                        points_whole,
                         vertex_colors=torch.tensor([[[1, 0, 0]]], dtype=torch.float32)
-                        .repeat(1, points_leaf.shape[0], 1)
+                        .repeat(1, points_whole.shape[0], 1)
                         .cuda(),
-                        faces=faces_leaf,
+                        faces=faces_whole,
                         resolution=(height, width),
                     )
 
-                    batch_image.append(root_image[0, :, :, 0])
+                    batch_image.append(image[0, :, :, 0])
                 batch_image = torch.stack(batch_image, dim=0)
                 loss = torch.nn.functional.mse_loss(batch_image,  object_white_mask.float())
                 plt.imshow(batch_image[0, :, :].detach().cpu().numpy())
@@ -581,7 +573,7 @@ def train():
             total_eval_loss = float(total_eval_loss) / float(iter_num) 
             writer.add_scalar("eval/loss", total_eval_loss, epoch)
             print("[Epoch %d/%d] Total_Eval_loss = %f." % (epoch, epochs, total_eval_loss))
-            print("====> Validation Epoch ====>")
+            print("====> Validation Epoch End ====>")
 
     print("Saved statistics in {}".format(experiment_tag))
 

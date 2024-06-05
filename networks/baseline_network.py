@@ -45,7 +45,7 @@ class RootTransPredictor(nn.Module):
         out = self.fc(feat)
         out = self.relu(out)
         out = self.out(out)
-        out = self.sigmoid(out) * 2. - 1.
+        out = self.sigmoid(out) - 0.5
 
         return out
 
